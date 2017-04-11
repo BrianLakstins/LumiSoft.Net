@@ -118,23 +118,25 @@ namespace LumiSoft.Net.IO
             /// <param name="x">Exception that occured during async operation.</param>
             private void Buffering_Completed(Exception x)
             {   
-                if(m_IsDisposed){
-                    return;
-                }
-            
-                if(x != null){
-                    m_pException = x;
-                    OnCompleted();
-                }
-                // We reached end of stream, no more data.
-                else if(m_pOwner.BytesInReadBuffer == 0){
-                    OnCompleted();
-                }
-                // Continue line reading.
-                else{
-                    if(DoLineReading(true)){
+                try{            
+                    if(x != null){
+                        m_pException = x;
                         OnCompleted();
                     }
+                    // We reached end of stream, no more data.
+                    else if(m_pOwner.BytesInReadBuffer == 0){
+                        OnCompleted();
+                    }
+                    // Continue line reading.
+                    else{
+                        if(DoLineReading(true)){
+                            OnCompleted();
+                        }
+                    }
+                }
+                catch(Exception e){
+                    m_pException = e;
+                    OnCompleted();
                 }
             }
 
@@ -788,14 +790,15 @@ namespace LumiSoft.Net.IO
         /// </summary>
         private class BufferReadAsyncOP : AsyncOP,IDisposable
         {
-            private bool        m_IsDisposed      = false;
-            private bool        m_IsCompleted     = false;            
-            private bool        m_IsCompletedSync = false;
-            private SmartStream m_pOwner          = null;
-            private byte[]      m_pBuffer         = null;
-            private int         m_MaxCount        = 0;
-            private int         m_BytesInBuffer   = 0;
-            private Exception   m_pException      = null;
+            private bool        m_IsDisposed       = false;
+            private bool        m_IsCompleted      = false;            
+            private bool        m_IsCompletedSync  = false;
+            private SmartStream m_pOwner           = null;
+            private byte[]      m_pBuffer          = null;
+            private int         m_MaxCount         = 0;
+            private int         m_BytesInBuffer    = 0;
+            private Exception   m_pException       = null;
+            private bool        m_IsCallbackCalled = false;
 
             /// <summary>
             /// Default constructor.
@@ -829,11 +832,17 @@ namespace LumiSoft.Net.IO
                 if(m_IsDisposed){
                     return;
                 }
-                m_IsDisposed = true;
 
+                // Terminate pending asynchronous operation, if any.
+                if(!m_IsCompleted){
+                    m_pException = new ObjectDisposedException("SmartStream");
+                    OnCompleted();
+                }
+                    
+                m_IsDisposed   = true;
                 m_pOwner       = null;
                 m_pBuffer      = null;
-                this.Completed = null;
+                this.Completed = null;                
             }
 
             #endregion
@@ -866,11 +875,12 @@ namespace LumiSoft.Net.IO
                     throw new ArgumentException("Argumnet 'count' value must be <= buffer.Length.");
                 }
 
-                m_IsCompleted   = false;
-                m_pBuffer       = buffer;
-                m_MaxCount      = count;
-                m_BytesInBuffer = 0;
-                m_pException    = null;
+                m_IsCompleted      = false;
+                m_pBuffer          = buffer;
+                m_MaxCount         = count;
+                m_BytesInBuffer    = 0;
+                m_pException       = null;
+                m_IsCallbackCalled = false;
 
                 // Operation may complete asynchronously;
                 if(async){
@@ -890,6 +900,7 @@ namespace LumiSoft.Net.IO
                     }),null);
 
                     m_IsCompletedSync = ar.CompletedSynchronously;
+                    m_IsCompleted     = m_IsCompletedSync;
                 }
                 // Operation must complete synchronously.
                 else{
@@ -1017,7 +1028,9 @@ namespace LumiSoft.Net.IO
             /// </summary>
             private void OnCompleted()
             {
-                if(this.Completed != null){
+                if(!m_IsCallbackCalled && this.Completed != null){
+                    m_IsCallbackCalled = true;
+
                     this.Completed(this,new EventArgs<BufferReadAsyncOP>(this));
                 }
             }
@@ -1035,7 +1048,7 @@ namespace LumiSoft.Net.IO
         private DateTime          m_LastActivity;
         private long              m_BytesReaded      = 0;
         private long              m_BytesWritten     = 0;
-        private int               m_BufferSize       = 32000;
+        private int               m_BufferSize       = 84000;
         private byte[]            m_pReadBuffer      = null;
         private int               m_ReadBufferOffset = 0;
         private int               m_ReadBufferCount  = 0;        
@@ -1073,6 +1086,11 @@ namespace LumiSoft.Net.IO
                 return;
             }
             m_IsDisposed = true;
+            
+            if(m_pReadBufferOP != null){
+                m_pReadBufferOP.Dispose();
+            }
+            m_pReadBufferOP = null;
 
             if(m_IsOwner){
                 m_pStream.Dispose();
@@ -1443,7 +1461,7 @@ namespace LumiSoft.Net.IO
                 throw new ArgumentNullException("stream");
             }
 
-            byte[] buffer = new byte[32000];
+            byte[] buffer = new byte[m_BufferSize];
             while(true){
                 int readedCount = Read(buffer,0,buffer.Length);
                 // End of stream reached, we readed file sucessfully.
@@ -2530,12 +2548,31 @@ namespace LumiSoft.Net.IO
         /// <param name="callback">An optional asynchronous callback, to be called when the write is complete.</param>
         /// <param name="state">A user-provided object that distinguishes this particular asynchronous write request from other requests.</param>
         /// <returns>An IAsyncResult that represents the asynchronous write, which could still be pending.</returns>
+        /// /// <exception cref="ObjectDisposedException">Is raised when this object is disposed and this method is accessed.</exception>
+        /// <exception cref="ArgumentNullException">Is raised when <b>buffer</b> is null reference.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">Is raised when any of the arguments has out of valid range.</exception>
         public override IAsyncResult BeginWrite(byte[] buffer,int offset,int count,AsyncCallback callback,object state)
         {
+            if(m_IsDisposed){
+                throw new ObjectDisposedException("SmartStream");
+            }
+            if(buffer == null){
+                throw new ArgumentNullException("buffer");
+            }            
+            if(offset < 0){
+                throw new ArgumentOutOfRangeException("offset","Argument 'offset' value must be >= 0.");
+            }
+            if(count < 0){
+                throw new ArgumentOutOfRangeException("count","Argument 'count' value must be >= 0.");
+            }
+            if(offset + count > buffer.Length){
+                throw new ArgumentOutOfRangeException("count","Argument 'count' is bigger than than argument 'buffer' can store.");
+            }
+
             m_LastActivity  = DateTime.Now;
             m_BytesWritten += count;
 
-            return m_pStream.BeginWrite(buffer, offset, count, callback, state);
+            return m_pStream.BeginWrite(buffer,offset,count,callback,state);
         }
 
         #endregion
@@ -2546,8 +2583,13 @@ namespace LumiSoft.Net.IO
         /// Ends an asynchronous write operation.
         /// </summary>
         /// <param name="asyncResult">A reference to the outstanding asynchronous I/O request.</param>
+        /// <exception cref="ArgumentNullException">Is raised when <b>asyncResult</b> is null reference.</exception>
         public override void EndWrite(IAsyncResult asyncResult)
         {
+            if(asyncResult == null){
+                throw new ArgumentNullException("asyncResult");
+            }
+
             m_pStream.EndWrite(asyncResult);
         }
 
@@ -2659,6 +2701,30 @@ namespace LumiSoft.Net.IO
                 
 
         #region Properties Implementation
+
+        /// <summary>
+        /// Gets if this object is disposed.
+        /// </summary>
+        public bool IsDisposed
+        {
+            get{ return m_IsDisposed; }
+        }
+
+        /// <summary>
+        /// Gets line buffer size in bytes.
+        /// </summary>
+        /// <exception cref="ObjectDisposedException">Is raised when this object is disposed and this property is accessed.</exception>
+        public int LineBufferSize
+        {
+            get{ 
+                if(m_IsDisposed){
+                    throw new ObjectDisposedException("SmartStream");
+                }
+
+                return m_BufferSize; 
+            }
+        }
+
 
         /// <summary>
         /// Gets this stream underlying stream.

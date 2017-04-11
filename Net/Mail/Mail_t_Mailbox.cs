@@ -103,8 +103,11 @@ namespace LumiSoft.Net.Mail
                 if(wordEncoder != null && MIME_Encoding_EncodedWord.MustEncode(m_DisplayName)){
                     return wordEncoder.Encode(m_DisplayName) + " " + "<" + m_Address + ">";
                 }
-                else{
+                else if(System.Text.RegularExpressions.Regex.IsMatch(m_DisplayName,@"[""(),:;<>@\[\\\]]")){
                     return TextUtils.QuoteString(m_DisplayName) + " " + "<" + m_Address + ">";
+                }
+                else{
+                    return m_DisplayName + " " + "<" + m_Address + ">";
                 }
             }
         }

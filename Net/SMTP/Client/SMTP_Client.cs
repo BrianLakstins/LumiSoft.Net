@@ -1075,16 +1075,51 @@ namespace LumiSoft.Net.SMTP.Client
         /// don't support any of the server authentication mechanisms.</exception>
         public AUTH_SASL_Client AuthGetStrongestMethod(string userName,string password)
         {
+            return AuthGetStrongestMethod(null,userName,password);
+        }
+
+        /// <summary>
+        /// Gets strongest authentication method which we can support from SMTP server.
+        /// Preference order DIGEST-MD5 -> CRAM-MD5 -> LOGIN -> PLAIN.
+        /// </summary>
+        /// <param name="domain">Domain name. Required by some auth methods like NTLM.</param>
+        /// <param name="userName">User name.</param>
+        /// <param name="password">User password.</param>
+        /// <returns>Returns authentication method.</returns>
+        /// <exception cref="ObjectDisposedException">Is raised when this object is disposed and this method is accessed.</exception>
+        /// <exception cref="InvalidOperationException">Is raised when SMTP client is not connected .</exception>
+        /// <exception cref="ArgumentNullException">Is raised when <b>userName</b> or <b>password</b> is null reference.</exception>
+        /// <exception cref="ArgumentException">Is raised when any of the arguments has invalid value.</exception>
+        /// <exception cref="NotSupportedException">Is raised when SMTP server won't support authentication or we 
+        /// don't support any of the server authentication mechanisms.</exception>
+        public AUTH_SASL_Client AuthGetStrongestMethod(string domain,string userName,string password)
+        {
             if(this.IsDisposed){
                 throw new ObjectDisposedException(this.GetType().Name);
             }
             if(!this.IsConnected){
 				throw new InvalidOperationException("You must connect first.");
 			}
+            if(userName == null){
+                throw new ArgumentNullException("userName");
+            }
+            if(password == null){
+                throw new ArgumentNullException("userName");
+            }
 
             List<string> authMethods = new List<string>(this.SaslAuthMethods);
             if(authMethods.Count == 0){
                 throw new NotSupportedException("SMTP server does not support authentication.");
+            }
+            else if(authMethods.Contains("NTLM") && (!string.IsNullOrEmpty(domain) || userName.IndexOf('\\') > -1)){
+                if(!string.IsNullOrEmpty(domain)){
+                    return new AUTH_SASL_Client_Ntlm(domain,userName, password);
+                }
+                else{
+                    string[] domainUsername = userName.Split('\\');
+
+                    return new AUTH_SASL_Client_Ntlm(domainUsername[0],domainUsername[1],password);
+                }
             }
             else if(authMethods.Contains("DIGEST-MD5")){
                 return new AUTH_SASL_Client_DigestMd5("SMTP",this.RemoteEndPoint.Address.ToString(),userName,password);
@@ -1110,7 +1145,7 @@ namespace LumiSoft.Net.SMTP.Client
         /// <summary>
         /// Sends AUTH command to SMTP server.
         /// </summary>
-        /// <param name="sasl">SASL authentication. You can use method <see cref="AuthGetStrongestMethod"/> to get strongest supported authentication.</param>
+        /// <param name="sasl">SASL authentication. You can use method <see cref="AuthGetStrongestMethod(string,string)"/> to get strongest supported authentication.</param>
         /// <exception cref="ObjectDisposedException">Is raised when this object is disposed and this method is accessed.</exception>
         /// <exception cref="InvalidOperationException">Is raised when SMTP client is not connected or is already authenticated.</exception>
         /// <exception cref="SMTP_ClientException">Is raised when SMTP server returns error.</exception>
@@ -1167,7 +1202,7 @@ namespace LumiSoft.Net.SMTP.Client
             /// <summary>
             /// Default constructor.
             /// </summary>
-            /// <param name="sasl">SASL authentication. You can use method <see cref="AuthGetStrongestMethod"/> to get strongest supported authentication.</param>
+            /// <param name="sasl">SASL authentication. You can use method <see cref="AuthGetStrongestMethod(string,string)"/> to get strongest supported authentication.</param>
             /// <exception cref="ArgumentNullException">Is raised when <b>sasl</b> is null reference.</exception>
             public AuthAsyncOP(AUTH_SASL_Client sasl)
             {
@@ -3863,6 +3898,36 @@ namespace LumiSoft.Net.SMTP.Client
 
         #endregion
 
+        #region method SupportsCapability
+
+        /// <summary>
+        /// Gets if SMTP server supports the specified capability.
+        /// </summary>
+        /// <param name="capability">SMTP capability.</param>
+        /// <returns>Return true if SMTP server supports the specified capability.</returns>
+        /// <exception cref="ArgumentNullException">Is raised when <b>capability</b> is null reference.</exception>
+        private bool SupportsCapability(string capability)
+        {
+            if(capability == null){
+                throw new ArgumentNullException("capability");
+            }
+
+            if(m_pEsmtpFeatures == null){
+                return false;
+            }
+            else{
+                foreach(string c in m_pEsmtpFeatures){
+                    if(string.Equals(c,capability,StringComparison.InvariantCultureIgnoreCase)){
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        #endregion
+
                 
         #region static method QuickSend
 
@@ -4032,7 +4097,25 @@ namespace LumiSoft.Net.SMTP.Client
         /// <summary>
         /// Sends message by using specified smart host.
         /// </summary>
-        /// <param name="localHost">Host name which is reported to SMTP server.</param>
+        /// <param name="localHost">Host name which is reported to SMTP server. Value null means local computer name is used.</param>
+        /// <param name="host">Host name or IP address.</param>
+        /// <param name="port">Host port.</param>
+        /// <param name="security">Specifies connection security.</param>
+        /// <param name="userName">SMTP server user name. This value may be null, then authentication not used.</param>
+        /// <param name="password">SMTP server password.</param>
+        /// <param name="message">Mail message to send.</param>
+        /// <exception cref="ArgumentNullException">Is raised when argument <b>host</b> or <b>message</b> is null.</exception>
+        /// <exception cref="ArgumentException">Is raised when any of the method arguments has invalid value.</exception>
+        /// <exception cref="SMTP_ClientException">Is raised when SMTP server returns error.</exception>
+        public static void QuickSendSmartHost(string localHost,string host,int port,TcpClientSecurity security,string userName,string password,Mail_Message message)
+        {
+            QuickSendSmartHost(localHost,host,port,security == TcpClientSecurity.SSL,userName,password,message);
+        }
+
+        /// <summary>
+        /// Sends message by using specified smart host.
+        /// </summary>
+        /// <param name="localHost">Host name which is reported to SMTP server. Value null means local computer name is used.</param>
         /// <param name="host">Host name or IP address.</param>
         /// <param name="port">Host port.</param>
         /// <param name="ssl">Specifies if connected via SSL.</param>
@@ -4118,7 +4201,7 @@ namespace LumiSoft.Net.SMTP.Client
         /// <summary>
         /// Sends message by using specified smart host.
         /// </summary>
-        /// <param name="localHost">Host name which is reported to SMTP server.</param>
+        /// <param name="localHost">Host name which is reported to SMTP server. Value null means local computer name is used.</param>
         /// <param name="host">Host name or IP address.</param>
         /// <param name="port">Host port.</param>
         /// <param name="ssl">Specifies if connected via SSL.</param>
@@ -4136,7 +4219,7 @@ namespace LumiSoft.Net.SMTP.Client
         /// <summary>
         /// Sends message by using specified smart host.
         /// </summary>
-        /// <param name="localHost">Host name which is reported to SMTP server.</param>
+        /// <param name="localHost">Host name which is reported to SMTP server. Value null means local computer name is used.</param>
         /// <param name="host">Host name or IP address.</param>
         /// <param name="port">Host port.</param>
         /// <param name="ssl">Specifies if connected via SSL.</param>
@@ -4149,6 +4232,26 @@ namespace LumiSoft.Net.SMTP.Client
         /// <exception cref="ArgumentException">Is raised when any of the method arguments has invalid value.</exception>
         /// <exception cref="SMTP_ClientException">Is raised when SMTP server returns error.</exception>
         public static void QuickSendSmartHost(string localHost,string host,int port,bool ssl,string userName,string password,string from,string[] to,Stream message)
+        {
+            QuickSendSmartHost(localHost,host,port,(ssl == true ? TcpClientSecurity.SSL : TcpClientSecurity.None),userName,password,from,to,message);
+        }
+
+        /// <summary>
+        /// Sends message by using specified smart host.
+        /// </summary>
+        /// <param name="localHost">Host name which is reported to SMTP server. Value null means local computer name is used.</param>
+        /// <param name="host">Host name or IP address.</param>
+        /// <param name="port">Host port.</param>
+        /// <param name="security">Specifies connection security.</param>
+        /// <param name="userName">SMTP server user name. This value may be null, then authentication not used.</param>
+        /// <param name="password">SMTP server password.</param>
+        /// <param name="from">Sender email what is reported to SMTP server.</param>
+        /// <param name="to">Recipients email addresses.</param>
+        /// <param name="message">Raw message to send.</param>
+        /// <exception cref="ArgumentNullException">Is raised when argument <b>host</b>,<b>from</b>,<b>to</b> or <b>stream</b> is null.</exception>
+        /// <exception cref="ArgumentException">Is raised when any of the method arguments has invalid value.</exception>
+        /// <exception cref="SMTP_ClientException">Is raised when SMTP server returns error.</exception>
+        public static void QuickSendSmartHost(string localHost,string host,int port,TcpClientSecurity security,string userName,string password,string from,string[] to,Stream message)
         {
             if(host == null){
                 throw new ArgumentNullException("host");
@@ -4181,7 +4284,10 @@ namespace LumiSoft.Net.SMTP.Client
             }
 
             using(SMTP_Client smtp = new SMTP_Client()){
-                smtp.Connect(host,port,ssl);                
+                smtp.Connect(host,port,security == TcpClientSecurity.SSL);
+                if(security == TcpClientSecurity.TLS || (security == TcpClientSecurity.UseTlsIfSupported && smtp.SupportsCapability(SMTP_ServiceExtensions.STARTTLS))){
+                    smtp.StartTLS();
+                }
                 smtp.EhloHelo(localHost != null ? localHost : Dns.GetHostName());
                 if(!string.IsNullOrEmpty(userName)){
                     smtp.Auth(smtp.AuthGetStrongestMethod(userName,password));
@@ -4319,7 +4425,8 @@ namespace LumiSoft.Net.SMTP.Client
 
                 // Search AUTH entry.
                 foreach(string feature in this.EsmtpFeatures){
-                    if(feature.ToUpper().StartsWith(SMTP_ServiceExtensions.AUTH)){
+                    string featureName = feature.Split(' ')[0];
+                    if(string.Equals(featureName,SMTP_ServiceExtensions.AUTH,StringComparison.InvariantCultureIgnoreCase)){
                         // Remove AUTH<SP> and split authentication methods.
                         return feature.Substring(4).Trim().Split(' ');
                     }

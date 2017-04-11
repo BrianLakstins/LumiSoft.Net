@@ -56,7 +56,7 @@ namespace LumiSoft.Net.MIME
                 retVal = new MIME_b_Text(defaultContentType.TypeWithSubtype);
             }
 
-            Net_Utils.StreamCopy(stream,retVal.EncodedStream,32000);
+            Net_Utils.StreamCopy(stream,retVal.EncodedStream,stream.LineBufferSize);
             retVal.SetModified(false);
 
             return retVal;
@@ -123,6 +123,10 @@ namespace LumiSoft.Net.MIME
                 // utf8 is invalid(must be utf-8), consider it as utf-8.
                 else if(string.Equals(this.Entity.ContentType.Param_Charset,"utf8",StringComparison.InvariantCultureIgnoreCase)){
                     return Encoding.GetEncoding("utf-8");
+                }
+                // iso8859_1 is invalid(must be iso8859-1), consider it as iso8859_1.
+                else if(string.Equals(this.Entity.ContentType.Param_Charset,"iso8859_1",StringComparison.InvariantCultureIgnoreCase)){
+                    return Encoding.GetEncoding("iso-8859-1");
                 }
                 else{
                     return Encoding.GetEncoding(this.Entity.ContentType.Param_Charset);

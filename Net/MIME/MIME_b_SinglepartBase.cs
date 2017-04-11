@@ -26,7 +26,7 @@ namespace LumiSoft.Net.MIME
                 throw new ArgumentNullException("contentType");
             }
 
-            m_pEncodedDataStream = new MemoryStreamEx(64000);
+            m_pEncodedDataStream = new MemoryStreamEx();
         }
 
         /// <summary>
@@ -76,7 +76,7 @@ namespace LumiSoft.Net.MIME
                 throw new ArgumentNullException("stream");
             }
 
-            Net_Utils.StreamCopy(GetEncodedDataStream(),stream,32000);
+            Net_Utils.StreamCopy(GetEncodedDataStream(),stream,84000);
         }
 
         #endregion
@@ -123,7 +123,7 @@ namespace LumiSoft.Net.MIME
         /// <param name="contentTransferEncoding">Content-Transfer-Encoding in what encoding <b>stream</b> data is.</param>
         /// <param name="stream">Stream data to add.</param>
         /// <exception cref="ArgumentNullException">Is raised when <b>contentTransferEncoding</b> or <b>stream</b> is null reference.</exception>
-        /// <exception cref="ArgumentException">Is raised when any of the argumennts has invalid value.</exception>
+        /// <exception cref="ArgumentException">Is raised when any of the arguments has invalid value.</exception>
         /// <exception cref="InvalidOperationException">Is raised when this method is accessed and this body is not bounded to any entity.</exception>
         public void SetEncodedData(string contentTransferEncoding,Stream stream)
         {
@@ -147,7 +147,7 @@ namespace LumiSoft.Net.MIME
             this.Entity.ContentTransferEncoding = contentTransferEncoding;
 
             m_pEncodedDataStream.SetLength(0);
-            Net_Utils.StreamCopy(stream,m_pEncodedDataStream,32000);
+            Net_Utils.StreamCopy(stream,m_pEncodedDataStream,84000);
        
             m_IsModified = true;
         }
@@ -183,7 +183,10 @@ namespace LumiSoft.Net.MIME
                 return new QuotedPrintableStream(new SmartStream(m_pEncodedDataStream,false),FileAccess.Read);
             }
             else if(transferEncoding == MIME_TransferEncodings.Base64){
-                return new Base64Stream(m_pEncodedDataStream,false,true,FileAccess.Read);
+                Base64Stream retVal = new Base64Stream(m_pEncodedDataStream,false,true,FileAccess.Read);
+                retVal.IgnoreInvalidPadding = true;
+
+                return retVal;
             }            
             else if(transferEncoding == MIME_TransferEncodings.Binary){
                 return new ReadWriteControlledStream(m_pEncodedDataStream,FileAccess.Read);
@@ -220,18 +223,18 @@ namespace LumiSoft.Net.MIME
             }
 
             if(string.Equals(transferEncoding,MIME_TransferEncodings.QuotedPrintable,StringComparison.InvariantCultureIgnoreCase)){
-                using(MemoryStreamEx fs = new MemoryStreamEx(32000)){
+                using(MemoryStreamEx fs = new MemoryStreamEx()){
                     QuotedPrintableStream encoder = new QuotedPrintableStream(new SmartStream(fs,false),FileAccess.ReadWrite);
-                    Net_Utils.StreamCopy(stream,encoder,32000);
+                    Net_Utils.StreamCopy(stream,encoder,84000);
                     encoder.Flush();
                     fs.Position = 0;
                     SetEncodedData(transferEncoding,fs);
                 }
             }
             else if(string.Equals(transferEncoding,MIME_TransferEncodings.Base64,StringComparison.InvariantCultureIgnoreCase)){
-                using(MemoryStreamEx fs = new MemoryStreamEx(32000)){
+                using(MemoryStreamEx fs = new MemoryStreamEx()){
                     Base64Stream encoder = new Base64Stream(fs,false,true,FileAccess.ReadWrite);                                     
-                    Net_Utils.StreamCopy(stream,encoder,32000);
+                    Net_Utils.StreamCopy(stream,encoder,84000);
                     encoder.Finish();
                     fs.Position = 0;
                     SetEncodedData(transferEncoding,fs);
@@ -275,6 +278,52 @@ namespace LumiSoft.Net.MIME
 
         #endregion
 
+        #region method DataToStream
+
+        /// <summary>
+        /// Stores body decoded-data to the specified stream.
+        /// </summary>
+        /// <param name="stream">Stream where to store body data.</param>
+        /// <exception cref="ArgumentNullException">Is raised when <b>stream</b> is null reference.</exception>
+        public void DataToStream(Stream stream)
+        {
+            if(stream == null){
+                throw new ArgumentNullException("stream");
+            }
+
+            using(Stream dataStream = GetDataStream()){
+                Net_Utils.StreamCopy(dataStream,stream,64000);
+            }
+        }
+
+        #endregion
+
+        #region method DataToFile
+
+        /// <summary>
+        /// Stores body decoded-data to the specified file.
+        /// </summary>
+        /// <param name="fileName">File name with path, where to store body data.</param>
+        /// <exception cref="ArgumentNullException">Is raised when <b>fileName</b> is null reference.</exception>
+        /// <exception cref="ArgumentException">Is raised when any of the arguments has invalid value.</exception>
+        public void DataToFile(string fileName)
+        {
+            if(fileName == null){
+                throw new ArgumentNullException("fileName");
+            }            
+            if(fileName == string.Empty){
+                throw new ArgumentException("Argument 'fileName' value must be specified.");
+            }
+
+            using(Stream fs = File.Create(fileName)){
+                using(Stream dataStream = GetDataStream()){
+                    Net_Utils.StreamCopy(dataStream,fs,64000);
+                }
+            }
+        }
+
+        #endregion
+
 
         #region Properties implementation
 
@@ -303,7 +352,7 @@ namespace LumiSoft.Net.MIME
         {
             get{ 
                 MemoryStream ms = new MemoryStream();
-                Net_Utils.StreamCopy(this.GetEncodedDataStream(),ms,32000);
+                Net_Utils.StreamCopy(this.GetEncodedDataStream(),ms,84000);
 
                 return ms.ToArray();
             }
@@ -319,7 +368,7 @@ namespace LumiSoft.Net.MIME
         {
             get{
                 MemoryStream ms = new MemoryStream();
-                Net_Utils.StreamCopy(this.GetDataStream(),ms,32000);
+                Net_Utils.StreamCopy(this.GetDataStream(),ms,84000);
 
                 return ms.ToArray(); 
             }

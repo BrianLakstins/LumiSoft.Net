@@ -16,3 +16,9 @@ http://www.lumisoft.ee/Forum/
 
 Examples:
 http://www.lumisoft.ee/lswww/download/downloads/Examples/
+
+
+You can download free version(Community Edition) of Visual Studio 2013 from:
+http://www.visualstudio.com/downloads/download-visual-studio-vs
+
+Contact Email: ivar@lumisoft.ee

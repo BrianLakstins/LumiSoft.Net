@@ -66,9 +66,10 @@ namespace LumiSoft.Net.MIME
                 /// <summary>
                 /// Default constructor.
                 /// </summary>
-                public _DataLine()
+                /// <param name="lineBufferSize">Line buffer size in bytes.</param>
+                public _DataLine(int lineBufferSize)
                 {
-                    m_pLineBuffer = new byte[32000];
+                    m_pLineBuffer = new byte[lineBufferSize];
                 }
 
 
@@ -141,7 +142,7 @@ namespace LumiSoft.Net.MIME
                 m_pStream  = stream;
                 m_Boundary = boundary;
 
-                m_pReadLineOP   = new SmartStream.ReadLineAsyncOP(new byte[32000],SizeExceededAction.ThrowException);
+                m_pReadLineOP   = new SmartStream.ReadLineAsyncOP(new byte[stream.LineBufferSize],SizeExceededAction.ThrowException);
                 m_pTextPreamble = new StringBuilder();
                 m_pTextEpilogue = new StringBuilder();
             }
@@ -306,7 +307,7 @@ namespace LumiSoft.Net.MIME
                                 
                 // Read line ahead, if none available. This is done for the boundary first line only.
                 if(m_pPreviousLine == null){
-                    m_pPreviousLine = new _DataLine();
+                    m_pPreviousLine = new _DataLine(m_pStream.LineBufferSize);
 
                     m_pStream.ReadLine(m_pReadLineOP,false);
                     if(m_pReadLineOP.Error != null){
@@ -550,7 +551,6 @@ namespace LumiSoft.Net.MIME
 
         #endregion
 
-        private MIME_h_ContentType    m_pContentType = null;
         private MIME_EntityCollection m_pBodyParts   = null;
         private string                m_TextPreamble = "";
         private string                m_TextEpilogue = "";
@@ -570,8 +570,14 @@ namespace LumiSoft.Net.MIME
                 throw new ArgumentException("Argument 'contentType' doesn't contain required boundary parameter.");
             }
 
-            m_pContentType = contentType;
+            m_pBodyParts = new MIME_EntityCollection();
+        }               
 
+        /// <summary>
+        /// Internal constructor. No Content-Type is created, user must do it manually.
+        /// </summary>
+        internal MIME_b_Multipart() 
+        {
             m_pBodyParts = new MIME_EntityCollection();
         }
 
@@ -669,7 +675,7 @@ namespace LumiSoft.Net.MIME
 
             // Owner entity has no content-type or has different content-type, just add/overwrite it.
             if(setContentType && (this.Entity.ContentType == null || !string.Equals(this.Entity.ContentType.TypeWithSubtype,this.MediaType,StringComparison.InvariantCultureIgnoreCase))){
-                this.Entity.ContentType = m_pContentType;
+                this.Entity.ContentType = this.ContentType;
             }
         }
 

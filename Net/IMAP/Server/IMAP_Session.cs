@@ -199,6 +199,7 @@ namespace LumiSoft.Net.IMAP.Server
             private string       m_InitialCmdLine = null;
             private Encoding     m_pCharset       = null;
             private string       m_CmdLine        = null;
+            private int          m_MaxLiteralSize = 32000;
 
             /// <summary>
             /// Default constructor.
@@ -252,6 +253,10 @@ namespace LumiSoft.Net.IMAP.Server
                     SmartStream.ReadLineAsyncOP readLineOP = new SmartStream.ReadLineAsyncOP(new byte[32000],SizeExceededAction.JunkAndThrowException);
                     while(true){
                         #region Read literal string
+
+                        if(literalSize > m_MaxLiteralSize){
+                            throw new DataSizeExceededException();
+                        }
 
                         // Send "+ Continue".
                         m_pSession.WriteLine("+ Continue.");
@@ -314,7 +319,7 @@ namespace LumiSoft.Net.IMAP.Server
             #endregion
 
 
-            #region method EndsWithLiteralString
+            #region static method EndsWithLiteralString
 
             /// <summary>
             /// Cheks if specified value ends with IMAP literal string.
@@ -322,7 +327,7 @@ namespace LumiSoft.Net.IMAP.Server
             /// <param name="value">Data value.</param>
             /// <returns>Returns true if value ends with IMAP literal string, otherwise false.</returns>
             /// <exception cref="ArgumentNullException">Is raised when <b>value</b> is null reference.</exception>
-            private bool EndsWithLiteralString(string value)
+            public static bool EndsWithLiteralString(string value)
             {
                 if(value == null){
                     throw new ArgumentNullException("value");
@@ -356,6 +361,7 @@ namespace LumiSoft.Net.IMAP.Server
             }
 
             #endregion
+
 
             #region method GetLiteralSize
 
@@ -426,7 +432,6 @@ namespace LumiSoft.Net.IMAP.Server
             private class QueueItem
             {
                 private bool                               m_IsSent                  = false;
-                private bool                               m_IsAsync                 = false;
                 private IMAP_r                             m_pResponse               = null;
                 private EventHandler<EventArgs<Exception>> m_pCompletedAsyncCallback = null;
 
@@ -457,16 +462,6 @@ namespace LumiSoft.Net.IMAP.Server
                     get{ return m_IsSent; }
 
                     set{ m_IsSent = value; }
-                }
-
-                /// <summary>
-                /// Gets or sets if sending complte asynchronously.
-                /// </summary>
-                public bool IsAsync
-                {
-                    get{ return m_IsAsync; }
-
-                    set{ m_IsAsync = value; }
                 }
 
                 /// <summary>
@@ -553,26 +548,13 @@ namespace LumiSoft.Net.IMAP.Server
                     throw new ArgumentNullException("response");
                 }
 
-                lock(m_pLock){
-                    QueueItem responseItem = new QueueItem(response,completedAsyncCallback);
-                    m_pResponses.Enqueue(responseItem);
+                QueueItem responseItem = new QueueItem(response,completedAsyncCallback);
+                m_pResponses.Enqueue(responseItem);
 
-                    // Start sending response, no active response sending.
-                    if(!m_IsSending){
-                        SendResponsesAsync();
-                    }
+                // Start sending response(s).
+                SendResponsesAsync(false);
 
-                    // Response sent synchronously.
-                    if(responseItem.IsSent){
-                        return false;
-                    }
-                    // Response queued or sending is in progress.
-                    else{
-                        responseItem.IsAsync = true;
-
-                        return true;
-                    }
-                }
+                return !responseItem.IsSent;
             }
 
             #endregion
@@ -583,67 +565,71 @@ namespace LumiSoft.Net.IMAP.Server
             /// <summary>
             /// Starts sending queued responses.
             /// </summary>
-            private void SendResponsesAsync()
+            /// <param name="calledFromAsync">Specifies if this methd is called from asynchronous operation.</param>
+            private void SendResponsesAsync(bool calledFromAsync)
             {
-                m_IsSending = true;
+                lock(m_pLock){
+                    if(m_IsSending || m_pResponses.Count == 0){
+                        return;
+                    }
+                    m_IsSending = true;
+                }
 
                 QueueItem responseItem = null;
 
-                // Create callback which is called when ToStreamAsync comletes asynchronously.
+                // Create callback which is called when SendAsync completes asynchronously.
                 EventHandler<EventArgs<Exception>> completedAsyncCallback = delegate(object s,EventArgs<Exception> e){
                     try{
-                        lock(m_pLock){
-                            responseItem.IsSent = true;
-
-                            if(responseItem.IsAsync && responseItem.CompletedAsyncCallback != null){
-                                responseItem.CompletedAsyncCallback(this,e);
-                            }
+                        // Call callback.
+                        if(responseItem.CompletedAsyncCallback != null){
+                            responseItem.CompletedAsyncCallback(this,e);
                         }
 
-                        // There are more responses available, send them.
-                        if(m_pResponses.Count > 0){
-                            SendResponsesAsync();
-                        }
-                        // We are done.
-                        else{
-                            lock(m_pLock){
-                                m_IsSending = false;
-                            }
-                        }
+                        // We don't need lock here, we don't care if some Thread or our call to SendResponsesAsync continues responses sending.
+                        m_IsSending = false;
+                                                                        
+                        // Continue sending queued responses, if any.
+                        SendResponsesAsync(true);
                     }
-                    catch(Exception x){
-                        lock(m_pLock){
-                            m_IsSending = false;
-                        }
+                    catch(Exception x){                     
                         m_pImap.OnError(x);
+                        m_IsSending = false;
                     }
                 };
 
-                // Send responses.
-                while(m_pResponses.Count > 0){
-                    responseItem = m_pResponses.Dequeue();
+                try{
+                    // Send responses.
+                    while(m_pResponses.Count > 0){
+                        responseItem = m_pResponses.Dequeue();
 
-                    // Response sending completed asynchronously, completedAsyncCallback will be called when operation completes.
-                    if(responseItem.Response.SendAsync(m_pImap,completedAsyncCallback)){
-                        return;
-                    }
-                    // Response sending completed synchronously.
-                    else{
-                        lock(m_pLock){
+                        // Response sending completed asynchronously, completedAsyncCallback will be called when operation completes.
+                        if(responseItem.Response.SendAsync(m_pImap,completedAsyncCallback)){
+                            return;
+                        }
+                        // Response sending completed synchronously.
+                        else{
                             responseItem.IsSent = true;
 
                             // This method(SendResponsesAsync) is called from completedAsyncCallback.
                             // Response sending has completed asynchronously, call callback.
-                            if(responseItem.IsAsync && responseItem.CompletedAsyncCallback != null){
+                            if(calledFromAsync && responseItem.CompletedAsyncCallback != null){
                                 responseItem.CompletedAsyncCallback(this,new EventArgs<Exception>(null));
+                            }
+                        }
+
+                        lock(m_pLock){
+                            if(m_pResponses.Count == 0){                    
+                                m_IsSending = false;
+
+                                return;
                             }
                         }
                     }
                 }
-
-                lock(m_pLock){
+                catch(Exception x){
+                    m_pImap.OnError(x);
                     m_IsSending = false;
-                }
+                }                
             }
 
             #endregion
@@ -901,7 +887,7 @@ namespace LumiSoft.Net.IMAP.Server
                 
                     return false;
                 }
-                                
+                                                                
                 string[] cmd_args = Encoding.UTF8.GetString(op.Buffer,0,op.LineBytesInBuffer).Split(new char[]{' '},3);
                 if(cmd_args.Length < 2){
                     m_pResponseSender.SendResponseAsync(new IMAP_r_u_ServerStatus("BAD","Error: Command '" + op.LineUtf8 + "' not recognized."));
@@ -911,7 +897,7 @@ namespace LumiSoft.Net.IMAP.Server
                 string   cmdTag   = cmd_args[0];
                 string   cmd      = cmd_args[1].ToUpperInvariant();
                 string   args     = cmd_args.Length == 3 ? cmd_args[2] : "";
-        
+
                 // Log.
                 if(this.Server.Logger != null){
                     // Hide password from log.
@@ -922,6 +908,15 @@ namespace LumiSoft.Net.IMAP.Server
                         this.Server.Logger.AddRead(this.ID,this.AuthenticatedUserIdentity,op.BytesInBuffer,op.LineUtf8,this.LocalEndPoint,this.RemoteEndPoint);
                     }
                 }
+
+                // Command line continues(ends with IMAP literal-string), read while we have full command line.
+                // Skip APPEND command, we handle it specially.
+                if(_CmdReader.EndsWithLiteralString(args) && !string.Equals(cmd,"APPEND",StringComparison.InvariantCultureIgnoreCase)){
+                    _CmdReader cmdReader = new _CmdReader(this,args,Encoding.UTF8);            
+                    cmdReader.Start();
+
+                    args = cmdReader.CmdLine;
+                }                
 
                 if(cmd == "STARTTLS"){                    
                     STARTTLS(cmdTag,args);
@@ -2055,9 +2050,15 @@ namespace LumiSoft.Net.IMAP.Server
                 m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"NO","Authentication required."));
 
                 return;
-            }
+            }            
 
             string folder = IMAP_Utils.DecodeMailbox(TextUtils.UnQuoteString(cmdText));
+
+            if(string.IsNullOrEmpty(folder)){
+                m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"NO","Mailbox name must be specified."));
+
+                return;
+            }
             
             IMAP_e_Folder e = OnSubscribe(cmdTag,folder,new IMAP_r_ServerStatus(cmdTag,"OK","SUBSCRIBE command completed."));
             
@@ -2193,54 +2194,59 @@ namespace LumiSoft.Net.IMAP.Server
             // Store start time
 			long startTime = DateTime.Now.Ticks;
 
-            string folder = IMAP_Utils.DecodeMailbox(TextUtils.UnQuoteString(parts[0]));
-            if(!(parts[1].StartsWith("(") && parts[1].EndsWith(")"))){
-                m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"BAD","Error in arguments."));
-            }
-            else{
-                IMAP_e_Select eSelect = OnSelect(cmdTag,folder);
-                if(eSelect.ErrorResponse != null){
-                    m_pResponseSender.SendResponseAsync(eSelect.ErrorResponse);
-
-                    return;
+            try{
+                string folder = IMAP_Utils.DecodeMailbox(TextUtils.UnQuoteString(parts[0]));
+                if(!(parts[1].StartsWith("(") && parts[1].EndsWith(")"))){
+                    m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"BAD","Error in arguments."));
                 }
-
-                IMAP_e_MessagesInfo eMessagesInfo = OnGetMessagesInfo(folder);
-                   
-                int  msgCount    = -1;
-                int  recentCount = -1;
-                long uidNext     = -1;
-                long folderUid   = -1;
-                int  unseenCount = -1;
-
-                string[] statusItems = parts[1].Substring(1,parts[1].Length - 2).Split(' ');
-                for(int i=0;i<statusItems.Length;i++){
-                    string statusItem = statusItems[i];
-                    if(string.Equals(statusItem,"MESSAGES",StringComparison.InvariantCultureIgnoreCase)){
-                        msgCount = eMessagesInfo.Exists;
-                    }
-                    else if(string.Equals(statusItem,"RECENT",StringComparison.InvariantCultureIgnoreCase)){
-                        recentCount = eMessagesInfo.Recent;
-                    }
-                    else if(string.Equals(statusItem,"UIDNEXT",StringComparison.InvariantCultureIgnoreCase)){
-                        uidNext = eMessagesInfo.UidNext;
-                    }
-                    else if(string.Equals(statusItem,"UIDVALIDITY",StringComparison.InvariantCultureIgnoreCase)){
-                        folderUid = eSelect.FolderUID;
-                    }
-                    else if(string.Equals(statusItem,"UNSEEN",StringComparison.InvariantCultureIgnoreCase)){
-                        unseenCount = eMessagesInfo.Unseen;
-                    }
-                    // Invalid status item.
-                    else{
-                        m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"BAD","Error in arguments."));
+                else{
+                    IMAP_e_Select eSelect = OnSelect(cmdTag,folder);
+                    if(eSelect.ErrorResponse != null){
+                        m_pResponseSender.SendResponseAsync(eSelect.ErrorResponse);
 
                         return;
                     }
-                }
+
+                    IMAP_e_MessagesInfo eMessagesInfo = OnGetMessagesInfo(folder);
+                   
+                    int  msgCount    = -1;
+                    int  recentCount = -1;
+                    long uidNext     = -1;
+                    long folderUid   = -1;
+                    int  unseenCount = -1;
+
+                    string[] statusItems = parts[1].Substring(1,parts[1].Length - 2).Split(' ');
+                    for(int i=0;i<statusItems.Length;i++){
+                        string statusItem = statusItems[i];
+                        if(string.Equals(statusItem,"MESSAGES",StringComparison.InvariantCultureIgnoreCase)){
+                            msgCount = eMessagesInfo.Exists;
+                        }
+                        else if(string.Equals(statusItem,"RECENT",StringComparison.InvariantCultureIgnoreCase)){
+                            recentCount = eMessagesInfo.Recent;
+                        }
+                        else if(string.Equals(statusItem,"UIDNEXT",StringComparison.InvariantCultureIgnoreCase)){
+                            uidNext = eMessagesInfo.UidNext;
+                        }
+                        else if(string.Equals(statusItem,"UIDVALIDITY",StringComparison.InvariantCultureIgnoreCase)){
+                            folderUid = eSelect.FolderUID;
+                        }
+                        else if(string.Equals(statusItem,"UNSEEN",StringComparison.InvariantCultureIgnoreCase)){
+                            unseenCount = eMessagesInfo.Unseen;
+                        }
+                        // Invalid status item.
+                        else{
+                            m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"BAD","Error in arguments."));
+
+                            return;
+                        }
+                    }
                                 
-                m_pResponseSender.SendResponseAsync(new IMAP_r_u_Status(folder,msgCount,recentCount,uidNext,folderUid,unseenCount));
-                m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"OK","STATUS completed in " + ((DateTime.Now.Ticks - startTime) / (decimal)10000000).ToString("f2") + " seconds."));
+                    m_pResponseSender.SendResponseAsync(new IMAP_r_u_Status(folder,msgCount,recentCount,uidNext,folderUid,unseenCount));
+                    m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"OK","STATUS completed in " + ((DateTime.Now.Ticks - startTime) / (decimal)10000000).ToString("f2") + " seconds."));
+                }
+            }
+            catch(Exception x){
+                m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"NO","Error: " + x.Message));
             }
         }
 
@@ -2426,7 +2432,7 @@ namespace LumiSoft.Net.IMAP.Server
                 }
             }
             catch(Exception x){
-                m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"NO","NO Error: " + x.Message));
+                m_pResponseSender.SendResponseAsync(new IMAP_r_ServerStatus(cmdTag,"NO","Error: " + x.Message));
             }
         }
 
@@ -4397,10 +4403,7 @@ namespace LumiSoft.Net.IMAP.Server
 
             #region Parse arguments
 
-            _CmdReader cmdReader = new _CmdReader(this,cmdText,Encoding.UTF8);            
-            cmdReader.Start();
-
-            StringReader r = new StringReader(cmdReader.CmdLine);
+            StringReader r = new StringReader(cmdText);
             
             // See if we have optional CHARSET argument.
             if(r.StartsWith("CHARSET",false)){
@@ -5217,7 +5220,7 @@ namespace LumiSoft.Net.IMAP.Server
 
         #endregion
                 
-
+        
         #region method WriteLine
 
         /// <summary>
@@ -5847,7 +5850,11 @@ namespace LumiSoft.Net.IMAP.Server
 				if(entity.Body is MIME_b_MessageRfc822){                    
 					retVal.Append(" " + IMAP_t_Fetch_r_i_Envelope.ConstructEnvelope(((MIME_b_MessageRfc822)entity.Body).Message));
 
-                    // TODO: BODYSTRUCTURE,LINES
+                    // BODYSTRUCTURE
+                    retVal.Append(" NIL");
+
+                    // LINES
+                    retVal.Append(" NIL");
 				}
 
 				// contentLines ---> FOR ContentType: text/xxx ONLY ###
@@ -5862,9 +5869,56 @@ namespace LumiSoft.Net.IMAP.Server
 					}
 						
 					retVal.Append(" " + lineCount.ToString());
-				}
+                }
 
-				retVal.Append(")");
+
+                #region BODYSTRUCTURE extention fields
+
+                if(bodystructure){
+                    // body MD5
+                    retVal.Append(" NIL");
+
+                    // body disposition  Syntax: {(disposition-type [ SP ("name" SP "value" *(SP "name" SP "value"))])}
+				    if(entity.ContentDisposition != null && entity.ContentDisposition.Parameters.Count > 0){
+                        retVal.Append(" (" + entity.ContentDisposition.DispositionType);
+
+                        if(entity.ContentDisposition.Parameters.Count > 0){
+                            retVal.Append(" (");
+
+                            bool first = true;
+                            foreach(MIME_h_Parameter parameter in entity.ContentDisposition.Parameters){
+                                // For the first item, don't add SP.
+                                if(first){
+                                    first = false;
+                                }
+                                else{
+                                    retVal.Append(" ");
+                                }
+
+                                retVal.Append("\"" + parameter.Name + "\" \"" + wordEncoder.Encode(parameter.Value) + "\"");
+                            }
+                            retVal.Append(")");
+                        }
+                        else{
+                            retVal.Append(" NIL");
+                        }
+
+                        retVal.Append(")");
+				    }
+				    else{
+					    retVal.Append(" NIL");
+				    }
+
+                    // body language
+                    retVal.Append(" NIL");
+
+                    // body location
+                    retVal.Append(" NIL");
+                }
+
+                #endregion
+
+                retVal.Append(")");
 			}
 
 			return retVal.ToString();

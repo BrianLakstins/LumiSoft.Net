@@ -431,17 +431,16 @@ namespace LumiSoft.Net.IMAP
                 throw new ArgumentNullException("mailbox");
             }
 
-            /* RFC 5738 3.
-                string        =/ utf8-quoted
-                utf8-quoted   = "*" DQUOTE *UQUOTED-CHAR DQUOTE
-                UQUOTED-CHAR  = QUOTED-CHAR / UTF8-2 / UTF8-3 / UTF8-4
+            /* RFC 6855 3.
+                quoted        = DQUOTE *uQUOTED-CHAR DQUOTE
+                uQUOTED-CHAR  = QUOTED-CHAR / UTF8-2 / UTF8-3 / UTF8-4
             */
 
             if(encoding == IMAP_Mailbox_Encoding.ImapUtf7){
                 return "\"" + IMAP_Utils.Encode_IMAP_UTF7_String(mailbox) + "\"";
             }
             else if(encoding == IMAP_Mailbox_Encoding.ImapUtf8){
-                return "*\"" + mailbox + "\"";
+                return "\"" + mailbox + "\"";
             }
             else{
                 return "\"" + mailbox + "\"";
@@ -611,12 +610,12 @@ namespace LumiSoft.Net.IMAP
         #region static method ReadString
 
         /// <summary>
-        /// Reads IMAP string/astring/nstring/utf8-quoted from string reader.
+        /// Reads IMAP string-literal/string/astring/nstring/utf8-quoted from string reader.
         /// </summary>
         /// <param name="reader">String reader.</param>
         /// <returns>Returns IMAP string.</returns>
         /// <exception cref="ArgumentNullException">Is raised when <b>reader</b> is null reference.</exception>
-        internal static string ReadString(StringReader reader)
+        public static string ReadString(StringReader reader)
         {
             if(reader == null){
                 throw new ArgumentNullException("reader");
@@ -624,8 +623,16 @@ namespace LumiSoft.Net.IMAP
 
             reader.ReadToFirstChar();
 
-            // utf8-quoted
-            if(reader.StartsWith("*\"")){
+            // We have string-literal.
+            if(reader.SourceString.StartsWith("{")){
+                int literalSize = Convert.ToInt32(reader.ReadParenthesized());
+                // Literal has CRLF ending, skip it.
+                reader.ReadSpecifiedLength(2);
+                                                
+                return reader.ReadSpecifiedLength(literalSize);
+            }
+            // utf8-quoted old rfc 5738
+            else if(reader.StartsWith("*\"")){
                 reader.ReadSpecifiedLength(1);
 
                 return reader.ReadWord();

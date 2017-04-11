@@ -108,39 +108,39 @@ namespace LumiSoft.Net.AUTH
                 string   name       = name_value[0].Trim();
 
                 if(name_value.Length == 2){
-                    if(name.ToLower() == "realm"){
+                    if(string.Equals(name,"realm",StringComparison.InvariantCultureIgnoreCase)){
                         m_Realm = TextUtils.UnQuoteString(name_value[1]);
                     }
-                    else if(name.ToLower() == "nonce"){
+                    else if(string.Equals(name,"nonce",StringComparison.InvariantCultureIgnoreCase)){
                         m_Nonce = TextUtils.UnQuoteString(name_value[1]);
                     }
                     // RFC bug ?: RFC 2831. digest-uri = "digest-uri" "=" <"> digest-uri-value <">
                     //            RFC 2617  digest-uri        = "uri" "=" digest-uri-value
-                    else if(name.ToLower() == "uri" || name.ToLower() == "digest-uri"){
+                    else if(string.Equals(name,"uri",StringComparison.InvariantCultureIgnoreCase) || string.Equals(name,"digest-uri",StringComparison.InvariantCultureIgnoreCase)){
                         m_Uri = TextUtils.UnQuoteString(name_value[1]);
                     }
-                    else if(name.ToLower() == "qop"){
+                    else if(string.Equals(name,"qop",StringComparison.InvariantCultureIgnoreCase)){
                         m_Qop = TextUtils.UnQuoteString(name_value[1]);
                     }
-                    else if(name.ToLower() == "nc"){
+                    else if(string.Equals(name,"nc",StringComparison.InvariantCultureIgnoreCase)){
                         m_NonceCount = Convert.ToInt32(TextUtils.UnQuoteString(name_value[1]));
                     }
-                    else if(name.ToLower() == "cnonce"){
+                    else if(string.Equals(name,"cnonce",StringComparison.InvariantCultureIgnoreCase)){
                         m_Cnonce = TextUtils.UnQuoteString(name_value[1]);
                     }
-                    else if(name.ToLower() == "response"){
+                    else if(string.Equals(name,"response",StringComparison.InvariantCultureIgnoreCase)){
                         m_Response = TextUtils.UnQuoteString(name_value[1]);
                     }
-                    else if(name.ToLower() == "opaque"){
+                    else if(string.Equals(name,"opaque",StringComparison.InvariantCultureIgnoreCase)){
                         m_Opaque = TextUtils.UnQuoteString(name_value[1]);
                     }
-                    else if(name.ToLower() == "username"){
+                    else if(string.Equals(name,"username",StringComparison.InvariantCultureIgnoreCase)){
                         m_UserName = TextUtils.UnQuoteString(name_value[1]);
                     }
-                    else if(name.ToLower() == "algorithm"){
+                    else if(string.Equals(name,"algorithm",StringComparison.InvariantCultureIgnoreCase)){
                         m_Algorithm = TextUtils.UnQuoteString(name_value[1]);
                     }
-                    else if(name.ToLower() == "charset"){
+                    else if(string.Equals(name,"charset",StringComparison.InvariantCultureIgnoreCase)){
                         m_Charset = TextUtils.UnQuoteString(name_value[1]);
                     }
                 }
@@ -186,17 +186,17 @@ namespace LumiSoft.Net.AUTH
             string a1 = "";
             string a2 = "";
             // Create A1
-            if(this.Algorithm == "" || this.Algorithm.ToLower() == "md5"){
+            if(string.IsNullOrEmpty(this.Algorithm) || String.Equals(this.Algorithm,"md5",StringComparison.InvariantCultureIgnoreCase)){
                 a1 = userName + ":" + this.Realm + ":" + password;
             }
-            else if(this.Algorithm.ToLower() == "md5-sess"){
+            else if(String.Equals(this.Algorithm,"md5-sess",StringComparison.InvariantCultureIgnoreCase)){
                 a1 = Net_Utils.ComputeMd5(userName + ":" + this.Realm + ":" + password,false) + ":" + this.Nonce + ":" + this.CNonce;
             }
             else{
                 throw new ArgumentException("Invalid Algorithm value '" + this.Algorithm + "' !");
             }
             // Create A2            
-            if(this.Qop == "" || this.Qop.ToLower() == "auth"){
+            if(string.IsNullOrEmpty(this.Qop) || String.Equals(this.Qop,"auth",StringComparison.InvariantCultureIgnoreCase)){
                 a2 = ":" + this.Uri;
             }
             else{
@@ -281,10 +281,10 @@ namespace LumiSoft.Net.AUTH
             */
 
             string A1 = "";
-            if(string.IsNullOrEmpty(this.Algorithm) || this.Algorithm.ToLower() == "md5"){
+            if(string.IsNullOrEmpty(this.Algorithm) || string.Equals(this.Algorithm,"md5",StringComparison.InvariantCultureIgnoreCase)){
                 A1 = userName + ":" + this.Realm + ":" + password;
             }
-            else if(this.Algorithm.ToLower() == "md5-sess"){
+            else if(string.Equals(this.Algorithm,"md5-sess",StringComparison.InvariantCultureIgnoreCase)){
                 A1 = H(userName + ":" + this.Realm + ":" + password) + ":" + this.Nonce + ":" + this.CNonce;
             }
             else{
@@ -292,14 +292,14 @@ namespace LumiSoft.Net.AUTH
             }
 
             string A2 = "";
-            if(string.IsNullOrEmpty(this.Qop) || this.Qop.ToLower() == "auth"){
+            if(string.IsNullOrEmpty(this.Qop) || string.Equals(this.Qop,"auth",StringComparison.InvariantCultureIgnoreCase)){
                 A2 = this.RequestMethod + ":" + this.Uri;
             }
             else{
                 throw new ArgumentException("Invalid 'qop' value '" + this.Qop + "'.");
             }
 
-            if(this.Qop.ToLower() == "auth" || this.Qop.ToLower() == "auth-int"){
+            if(string.Equals(this.Qop,"auth",StringComparison.InvariantCultureIgnoreCase) || string.Equals(this.Qop,"auth-int",StringComparison.InvariantCultureIgnoreCase)){
                 // request-digest  = <"> < KD ( H(A1),unq(nonce-value) ":" nc-value ":" unq(cnonce-value) ":" unq(qop-value) ":" H(A2) )> <">
                 // We don't add quoutes here.
 
@@ -434,6 +434,9 @@ namespace LumiSoft.Net.AUTH
                 authData.Append("cnonce=\"" + m_Cnonce + "\",");
             }
             authData.Append("response=\"" + response + "\",");
+            if(!string.IsNullOrEmpty(m_Algorithm)){
+                authData.Append("algorithm=\"" + m_Algorithm + "\",");
+            }
             if(!string.IsNullOrEmpty(m_Opaque)){
                 authData.Append("opaque=\"" + m_Opaque + "\",");
             }

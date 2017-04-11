@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Text;
+using System.Security.Cryptography.X509Certificates;
 
 using LumiSoft.Net.IO;
 
@@ -113,75 +114,60 @@ namespace LumiSoft.Net.MIME
 
         #endregion
 
-        #region static method CreateAttachment
+
+        #region method ToFile
 
         /// <summary>
-        /// Creates attachment entity.
+        /// Stores message to the specified file.
         /// </summary>
-        /// <param name="file">File name with optional path.</param>
-        /// <returns>Returns created attachment entity.</returns>
-        /// <exception cref="ArgumentNullException">Is raised when <b>file</b> is null reference.</exception>
-        public static MIME_Entity CreateAttachment(string file)
+        /// <exception cref="ArgumentNullException">Is raised when <b>file</b> is null.</exception>
+        /// <exception cref="ArgumentException">Is raised when any of the arguments has invalid value.</exception>
+        public void ToFile(string file)
         {
-            if(file == null){
-                throw new ArgumentNullException("file");
-            }
-
-            MIME_Entity retVal = new MIME_Entity();
-            MIME_b_Application body = new MIME_b_Application(MIME_MediaTypes.Application.octet_stream);
-            retVal.Body = body;
-            body.SetDataFromFile(file,MIME_TransferEncodings.Base64);
-            retVal.ContentType.Param_Name = Path.GetFileName(file);
-
-            FileInfo fileInfo = new FileInfo(file);
-            MIME_h_ContentDisposition disposition = new MIME_h_ContentDisposition(MIME_DispositionTypes.Attachment);
-            disposition.Param_FileName         = Path.GetFileName(file);
-            disposition.Param_Size             = fileInfo.Length;
-            disposition.Param_CreationDate     = fileInfo.CreationTime;
-            disposition.Param_ModificationDate = fileInfo.LastWriteTime;
-            disposition.Param_ReadDate         = fileInfo.LastAccessTime;
-            retVal.ContentDisposition = disposition;
-            
-            return retVal;
-        }
-
-        /// <summary>
-        /// Creates attachment entity.
-        /// </summary>
-        /// <param name="stream">Attachment data stream. Data is read from stream current position.</param>
-        /// <param name="fileName">File name.</param>
-        /// <returns>Returns created attachment entity.</returns>
-        /// <exception cref="ArgumentNullException">Is raised when <b>stream</b> or <b>fileName</b> is null reference.</exception>
-        public static MIME_Entity CreateAttachment(Stream stream,string fileName)
-        {
-            if(stream == null){
-                throw new ArgumentNullException("stream");
-            }
-            if(fileName == null){
-                throw new ArgumentNullException("fileName");
-            }
-
-            long fileSize = stream.CanSeek ? (stream.Length - stream.Position) : -1;
-
-            MIME_Entity retVal = new MIME_Entity();
-            MIME_b_Application body = new MIME_b_Application(MIME_MediaTypes.Application.octet_stream);
-            retVal.Body = body;
-            body.SetData(stream,MIME_TransferEncodings.Base64);
-            retVal.ContentType.Param_Name = Path.GetFileName(fileName);
-
-            MIME_h_ContentDisposition disposition = new MIME_h_ContentDisposition(MIME_DispositionTypes.Attachment);
-            disposition.Param_FileName         = Path.GetFileName(fileName);
-            disposition.Param_Size             = fileSize;
-            //disposition.Param_CreationDate     = fileInfo.CreationTime;
-            //disposition.Param_ModificationDate = fileInfo.LastWriteTime;
-            //disposition.Param_ReadDate         = fileInfo.LastAccessTime;
-            retVal.ContentDisposition = disposition;
-
-            return retVal;
+            ToFile(file,new MIME_Encoding_EncodedWord(MIME_EncodedWordEncoding.B,Encoding.UTF8),Encoding.UTF8);
         }
 
         #endregion
 
+        #region method ToStream
+
+        /// <summary>
+        /// Store message to the specified stream.
+        /// </summary>
+        /// <param name="stream">Stream where to store MIME entity. Storing starts form stream current position.</param>
+        /// <exception cref="ArgumentNullException">Is raised when <b>stream</b> is null.</exception>
+        public void ToStream(Stream stream)
+        {
+            ToStream(stream,new MIME_Encoding_EncodedWord(MIME_EncodedWordEncoding.B,Encoding.UTF8),Encoding.UTF8);
+        }
+
+        #endregion
+
+        #region method ToString
+
+        /// <summary>
+        /// Returns message as string.
+        /// </summary>
+        /// <returns>Returns message as string.</returns>
+        public override string ToString()
+        {
+            return ToString(new MIME_Encoding_EncodedWord(MIME_EncodedWordEncoding.B,Encoding.UTF8),Encoding.UTF8);
+        }
+
+        #endregion
+
+        #region method ToByte
+
+        /// <summary>
+        /// Returns message as byte[].
+        /// </summary>
+        /// <returns>Returns message as byte[].</returns>
+        public byte[] ToByte()
+        {
+            return ToByte(new MIME_Encoding_EncodedWord(MIME_EncodedWordEncoding.B,Encoding.UTF8),Encoding.UTF8);
+        }
+
+        #endregion
 
         #region method GetAllEntities
 
@@ -261,9 +247,85 @@ namespace LumiSoft.Net.MIME
         // TODO:
         //public MIME_Entity GetEntityByPartsSpecifier(string partsSpecifier)
 
-        
+        #region method ConvertToMultipartSigned
+
+        /// <summary>
+        /// Converts message to multipart/signed message.
+        /// </summary>
+        /// <param name="signerCert">>Signer certificate</param>
+        /// <exception cref="ArgumentNullException">Is raised when <b>signerCert</b> is null reference.</exception>
+        /// <exception cref="InvalidOperationException">Is raised when this method is called for already signed message.</exception>
+        public void ConvertToMultipartSigned(X509Certificate2 signerCert)
+        {
+            if(signerCert == null){
+                throw new ArgumentNullException("signerCert");
+            }
+            if(this.IsSigned){
+                throw new InvalidOperationException("Message is already signed.");
+            }
+
+            MIME_Entity msgEntity = new MIME_Entity();
+            msgEntity.Body = this.Body;
+            msgEntity.ContentDisposition = this.ContentDisposition;
+            msgEntity.ContentTransferEncoding = this.ContentTransferEncoding;
+            this.ContentTransferEncoding = null;
+
+            MIME_b_MultipartSigned multipartSigned = new MIME_b_MultipartSigned();
+            this.Body = multipartSigned;
+            multipartSigned.SetCertificate(signerCert);
+            multipartSigned.BodyParts.Add(msgEntity);
+        }
+
+        #endregion
+
+        #region method VerifySignatures
+
+        /// <summary>
+        /// Checks SMIME signed enities signtures. NOTE: For not signed messsages this method always return true.
+        /// </summary>
+        /// <returns>Returns true if all signatures are valid.</returns>
+        /// <exception cref="NotSupportedException">Is raised when entity is signed with not supported encryption.</exception>
+        public bool VerifySignatures()
+        {
+            foreach(MIME_Entity entity in this.AllEntities){
+                if(string.Equals(entity.ContentType.TypeWithSubtype,MIME_MediaTypes.Application.pkcs7_mime,StringComparison.InvariantCultureIgnoreCase)){
+                    if(!((MIME_b_ApplicationPkcs7Mime)entity.Body).VerifySignature()){
+                        return false;
+                    }
+                }
+                else if(string.Equals(entity.ContentType.TypeWithSubtype,MIME_MediaTypes.Multipart.signed,StringComparison.InvariantCultureIgnoreCase)){
+                    if(!((MIME_b_MultipartSigned)entity.Body).VerifySignature()){
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        #endregion
+
 
         #region Properties Implementation
+
+        /// <summary>
+        /// Gets if message contains signed data.
+        /// </summary>
+        public bool IsSigned
+        {
+            get{
+                foreach(MIME_Entity entity in this.AllEntities){
+                    if(string.Equals(entity.ContentType.TypeWithSubtype,MIME_MediaTypes.Application.pkcs7_mime,StringComparison.InvariantCultureIgnoreCase)){
+                        return true;
+                    }
+                    else if(string.Equals(entity.ContentType.TypeWithSubtype,MIME_MediaTypes.Multipart.signed,StringComparison.InvariantCultureIgnoreCase)){
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        }
 
         /// <summary>
         /// Gets all MIME entities as list.
@@ -302,6 +364,80 @@ namespace LumiSoft.Net.MIME
 
                 return retVal.ToArray();
             }
+        }
+
+        #endregion
+
+
+        // --- Obsolete stuff --------
+
+        #region static method CreateAttachment
+
+        /// <summary>
+        /// Creates attachment entity.
+        /// </summary>
+        /// <param name="file">File name with optional path.</param>
+        /// <returns>Returns created attachment entity.</returns>
+        /// <exception cref="ArgumentNullException">Is raised when <b>file</b> is null reference.</exception>
+        [Obsolete("Use MIME_Entity.CreateEntity_Attachment instead.")]
+        public static MIME_Entity CreateAttachment(string file)
+        {
+            if(file == null){
+                throw new ArgumentNullException("file");
+            }
+
+            MIME_Entity retVal = new MIME_Entity();
+            MIME_b_Application body = new MIME_b_Application(MIME_MediaTypes.Application.octet_stream);
+            retVal.Body = body;
+            body.SetDataFromFile(file,MIME_TransferEncodings.Base64);
+            retVal.ContentType.Param_Name = Path.GetFileName(file);
+
+            FileInfo fileInfo = new FileInfo(file);
+            MIME_h_ContentDisposition disposition = new MIME_h_ContentDisposition(MIME_DispositionTypes.Attachment);
+            disposition.Param_FileName         = Path.GetFileName(file);
+            disposition.Param_Size             = fileInfo.Length;
+            disposition.Param_CreationDate     = fileInfo.CreationTime;
+            disposition.Param_ModificationDate = fileInfo.LastWriteTime;
+            disposition.Param_ReadDate         = fileInfo.LastAccessTime;
+            retVal.ContentDisposition = disposition;
+            
+            return retVal;
+        }
+
+        /// <summary>
+        /// Creates attachment entity.
+        /// </summary>
+        /// <param name="stream">Attachment data stream. Data is read from stream current position.</param>
+        /// <param name="fileName">File name.</param>
+        /// <returns>Returns created attachment entity.</returns>
+        /// <exception cref="ArgumentNullException">Is raised when <b>stream</b> or <b>fileName</b> is null reference.</exception>        
+        [Obsolete("Use MIME_Entity.CreateEntity_Attachment instead.")]
+        public static MIME_Entity CreateAttachment(Stream stream,string fileName)
+        {
+            if(stream == null){
+                throw new ArgumentNullException("stream");
+            }
+            if(fileName == null){
+                throw new ArgumentNullException("fileName");
+            }
+
+            long fileSize = stream.CanSeek ? (stream.Length - stream.Position) : -1;
+
+            MIME_Entity retVal = new MIME_Entity();
+            MIME_b_Application body = new MIME_b_Application(MIME_MediaTypes.Application.octet_stream);
+            retVal.Body = body;
+            body.SetData(stream,MIME_TransferEncodings.Base64);
+            retVal.ContentType.Param_Name = Path.GetFileName(fileName);
+
+            MIME_h_ContentDisposition disposition = new MIME_h_ContentDisposition(MIME_DispositionTypes.Attachment);
+            disposition.Param_FileName         = Path.GetFileName(fileName);
+            disposition.Param_Size             = fileSize;
+            //disposition.Param_CreationDate     = fileInfo.CreationTime;
+            //disposition.Param_ModificationDate = fileInfo.LastWriteTime;
+            //disposition.Param_ReadDate         = fileInfo.LastAccessTime;
+            retVal.ContentDisposition = disposition;
+
+            return retVal;
         }
 
         #endregion
