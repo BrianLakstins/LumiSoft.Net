@@ -5774,7 +5774,7 @@ namespace LumiSoft.Net.IMAP.Server
 					retVal.Append("\"" + entity.ContentType.Type + "\"");
 				}
 				else{
-                    retVal.Append(" \"text\"");  //BAL 4/11/2017: NIL works for Thunderbird client, but other mail clients don't seem to like it.
+                    retVal.Append("\"text\"");  //BAL 4/11/2017: NIL works for Thunderbird client, but other mail clients don't seem to like it.
                 }
 
                 // Add contentTypeSubMediaType
@@ -5880,7 +5880,7 @@ namespace LumiSoft.Net.IMAP.Server
 
                     // body disposition  Syntax: {(disposition-type [ SP ("name" SP "value" *(SP "name" SP "value"))])}
 				    if(entity.ContentDisposition != null && entity.ContentDisposition.Parameters.Count > 0){
-                        retVal.Append(" (" + entity.ContentDisposition.DispositionType);
+                        retVal.Append(" (\"" + entity.ContentDisposition.DispositionType + "\"");
 
                         if(entity.ContentDisposition.Parameters.Count > 0){
                             retVal.Append(" (");
